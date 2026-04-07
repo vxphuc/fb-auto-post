@@ -50,4 +50,29 @@ router.post("/upload", upload.array("images", 20), (req, res) =>{
         })
     }
 });
+
+router.delete("/:name", (req, res) => {
+    try{
+        const imageName = req.params.name;
+        const imagePath = path.join(__dirname, "../data/images", imageName);
+        if(!fs.existsSync(imagePath)){
+            return res.status(404).json({
+                success: false,
+                message: "Ảnh không tồn tại"
+            })
+        }
+        fs.unlinkSync(imagePath);
+        res.json({
+            success: true,
+            message: "Xóa ảnh thành công"
+        });
+    }catch(error){
+        res.status(500).json({
+            success: false,
+            message: "Xóa ảnh thất bại",
+            error: error.message
+        })
+    }
+})
+
 module.exports = router;
