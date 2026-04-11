@@ -1,0 +1,9 @@
+{
+  "numberOfTabs": 4,
+  "delayMin": 10000,
+  "delayMax": 20000,
+  "enableImage": true,
+  "enableRandomContent": true,
+  "enableRandomImage": true,
+  "headless": false
+}
