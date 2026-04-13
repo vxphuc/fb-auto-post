@@ -1,14 +1,33 @@
 [
-  {
-    "name": "c_user",
-    "value": "61573241581025",
-    "domain": ".facebook.com",
-    "path": "/"
-  },
-  {
-    "name": "xs",
-    "value": "25%3AU5kKGIxYDk6dgA",
-    "domain": ".facebook.com",
-    "path": "/"
-  }
+    {
+        "name": "c_user",
+        "value": "61573241581025",
+        "domain": ".facebook.com",
+        "path": "/"
+    },
+    {
+        "name": "datr",
+        "value": "Fm2maDBvt0A_T3yslNjJhHH8",
+        "domain": ".facebook.com",
+        "path": "/"
+    },
+    {
+        "name": "fr",
+        "value": "1bZ8uHE02QfyhD3HB.AWeBDV2MixLF85mxi0XW4a4qPC8lWstdDTKJQ3dPayrPAZ64Vl4.BpziEi..AAA.0.0.BpziEi.AWcKZlFrqrN7mzkY5LVRj3fcfW0",
+        "domain": ".facebook.com",
+        "path": "/"
+    },
+    {
+        "name": "sb",
+        "value": "Fm2maFsbW-438TkxGZvKn7Cy",
+        "domain": ".facebook.com",
+        "path": "/"
+    },
+    {
+        "name": "xs",
+        "value": "25%3AU5kKGIxYDk6dgA%3A2%3A1775116576%3A-1%3A-1%3A%3AAcyVRpiifh2-68kT9WNCfjEmiiOi5ZRciO8MIEJ_uw",
+        "domain": ".facebook.com",
+        "path": "/"
+    }
+    
 ]
