@@ -2,6 +2,11 @@ const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
 
+const Group = require("../models/Group");
+const Content = require("../models/Content");
+const Cookie = require("../models/Cookie");
+const Setting = require("../models/Setting");
+
 function normalizeText(value) {
     return (value || "")
         .normalize("NFD")
@@ -12,18 +17,18 @@ function normalizeText(value) {
         .trim();
 }
 
-async function clickButtonByText(buttons, expectedTexts, logPrefix, options = {}) {
+function randomDelay(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function clickButtonByText(buttons, expectedTexts, options = {}) {
     const { exact = false } = options;
 
     for (const btn of buttons) {
         const text = await btn.evaluate(el => (el.innerText || "").trim());
         const normalizedText = normalizeText(text);
 
-        console.log(`${logPrefix}:`, text);
-
-        if (!normalizedText) {
-            continue;
-        }
+        if (!normalizedText) continue;
 
         const matched = expectedTexts.some(expected => {
             if (exact) {
@@ -35,42 +40,186 @@ async function clickButtonByText(buttons, expectedTexts, logPrefix, options = {}
 
         if (matched) {
             await btn.click();
-            return { clicked: true, text, normalizedText };
+            return true;
         }
     }
 
-    return { clicked: false, text: "", normalizedText: "" };
+    return false;
+}
+
+async function worker(browser, workerId, workerGroups, posts, cookies, settings, imageFolder) {
+    const page = await browser.newPage();
+
+    await page.setViewport({
+        width: 1280,
+        height: 800
+    });
+
+    await page.goto("https://www.facebook.com", {
+        waitUntil: "domcontentloaded"
+    });
+
+    await page.setCookie(...cookies);
+
+    await page.reload({
+        waitUntil: "domcontentloaded"
+    });
+
+    console.log(`[TAB ${workerId}] Đăng nhập Facebook thành công`);
+
+    for (const group of workerGroups) {
+        try {
+            console.log(`[TAB ${workerId}] Đang mở group: ${group}`);
+
+            await page.goto(group, {
+                waitUntil: "domcontentloaded",
+                timeout: 60000
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+            const randomPost =
+                posts[Math.floor(Math.random() * posts.length)];
+
+            console.log(`[TAB ${workerId}] Nội dung được chọn: ${randomPost}`);
+
+            const openButtons = await page.$$('div[role="button"]');
+
+            let foundCreatePostButton = false;
+
+            for (const btn of openButtons) {
+                const text = await page.evaluate(el => el.innerText, btn);
+                const normalizedText = normalizeText(text);
+
+                if (
+                    normalizedText &&
+                    (
+                        normalizedText.includes("write something") ||
+                        normalizedText.includes("create post") ||
+                        normalizedText.includes("ban viet gi di") ||
+                        normalizedText.includes("hay viet gi do") ||
+                        normalizedText.includes("tao bai dang")
+                    )
+                ) {
+                    await btn.click();
+                    foundCreatePostButton = true;
+                    break;
+                }
+            }
+
+            if (!foundCreatePostButton) {
+                throw new Error("Không tìm thấy nút tạo bài viết");
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            const textboxSelector = 'div[role="dialog"] div[role="textbox"]';
+
+            await page.waitForSelector(textboxSelector, {
+                timeout: 15000
+            });
+
+            await page.click(textboxSelector);
+
+            await page.keyboard.type(randomPost, {
+                delay: 50
+            });
+
+            console.log(`[TAB ${workerId}] Đã nhập nội dung`);
+
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            const imageFiles = fs.readdirSync(imageFolder);
+
+            if (imageFiles.length > 0) {
+                const dialogButtons = await page.$$('div[role="dialog"] div[role="button"]');
+
+                const openedAddToPost = await clickButtonByText(
+                    dialogButtons,
+                    ["add to your post"]
+                );
+
+                if (openedAddToPost) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+
+                    const [fileChooser] = await Promise.all([
+                        page.waitForFileChooser({ timeout: 10000 }),
+                        page.evaluate(() => {
+                            const buttons = Array.from(
+                                document.querySelectorAll('div[role="dialog"] div[role="button"]')
+                            );
+
+                            const target = buttons.find(btn => {
+                                const text = (btn.innerText || "").trim().toLowerCase();
+                                return text === "photo/video";
+                            });
+
+                            if (target) {
+                                target.click();
+                            }
+                        })
+                    ]);
+
+                    const randomImage =
+                        imageFiles[Math.floor(Math.random() * imageFiles.length)];
+
+                    const imagePath = path.join(imageFolder, randomImage);
+
+                    await fileChooser.accept([imagePath]);
+
+                    console.log(`[TAB ${workerId}] Upload ảnh: ${randomImage}`);
+
+                    await new Promise(resolve => setTimeout(resolve, 8000));
+                }
+            }
+
+            const postButtons = await page.$$('div[role="dialog"] div[role="button"]');
+
+            const posted = await clickButtonByText(
+                postButtons,
+                ["post", "dang"],
+                { exact: true }
+            );
+
+            if (!posted) {
+                throw new Error("Không tìm thấy nút đăng");
+            }
+
+            console.log(`[TAB ${workerId}] Đăng bài thành công`);
+
+            const delayTime = randomDelay(
+                settings.delayMin,
+                settings.delayMax
+            );
+
+            console.log(`[TAB ${workerId}] Nghỉ ${delayTime / 1000}s`);
+
+            await new Promise(resolve =>
+                setTimeout(resolve, delayTime)
+            );
+
+        } catch (error) {
+            console.log(`[TAB ${workerId}] Lỗi group: ${group}`);
+            console.log(error.message);
+        }
+    }
+
+    await page.close();
 }
 
 async function runBot() {
     try {
-        console.log("Bot bat dau chay...");
-
-        const settingsPath = path.join(__dirname, "../data/settings.json");
-        const groupsPath = path.join(__dirname, "../data/groups.txt");
-        const postPath = path.join(__dirname, "../data/post.txt");
-        const cookiesPath = path.join(__dirname, "../data/cookies.json");
         const imageFolder = path.join(__dirname, "../data/images");
 
-        const settings = JSON.parse(
-            fs.readFileSync(settingsPath, "utf8")
-        );
+        const settings = await Setting.findOne().lean();
 
-        const groups = fs
-            .readFileSync(groupsPath, "utf8")
-            .split("\n")
-            .map(item => item.trim())
-            .filter(item => item !== "");
+        const groupsData = await Group.find().lean();
+        const groups = groupsData.map(item => item.url);
 
-        const posts = fs
-            .readFileSync(postPath, "utf8")
-            .split("\n")
-            .map(item => item.trim())
-            .filter(item => item !== "");
+        const postsData = await Content.find().lean();
+        const posts = postsData.map(item => item.text);
 
-        const cookies = JSON.parse(
-            fs.readFileSync(cookiesPath, "utf8")
-        );
+        const cookies = await Cookie.find().lean();
 
         const browser = await puppeteer.launch({
             headless: settings.headless,
@@ -81,239 +230,38 @@ async function runBot() {
             ]
         });
 
-        const page = await browser.newPage();
+        const actualTabs = Math.min(
+            settings.numberOfTabs || 4,
+            groups.length
+        );
 
-        page.on("dialog", async dialog => {
-            try {
-                const message = normalizeText(dialog.message());
+        const chunkSize = Math.ceil(groups.length / actualTabs);
 
-                if (dialog.type() === "beforeunload" || message.includes("leave site")) {
-                    console.log("Phat hien hop thoai roi trang, chap nhan de tiep tuc");
-                    await dialog.accept();
-                    return;
-                }
+        const groupChunks = [];
 
-                await dialog.dismiss();
-            } catch (dialogError) {
-                console.log("Khong xu ly duoc dialog:", dialogError.message);
-            }
-        });
-
-        await page.goto("https://www.facebook.com", {
-            waitUntil: "domcontentloaded"
-        });
-
-        await page.setCookie(...cookies);
-
-        await page.reload({
-            waitUntil: "domcontentloaded"
-        });
-
-        console.log("Dang nhap Facebook thanh cong");
-
-        for (const group of groups) {
-            try {
-                console.log("Dang mo group:", group);
-
-                await page.goto(group, {
-                    waitUntil: "domcontentloaded",
-                    timeout: 60000
-                });
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, 5000)
-                );
-
-                const randomPost =
-                    posts[Math.floor(Math.random() * posts.length)];
-
-                console.log("Noi dung duoc chon:", randomPost);
-
-                const openButtons = await page.$$('div[role="button"]');
-
-                let foundCreatePostButton = false;
-
-                for (const btn of openButtons) {
-                    const text = await page.evaluate(el => el.innerText, btn);
-                    const normalizedText = normalizeText(text);
-
-                    if (
-                        normalizedText &&
-                        (
-                            normalizedText.includes("write something") ||
-                            normalizedText.includes("create post") ||
-                            normalizedText.includes("ban viet gi di") ||
-                            normalizedText.includes("hay viet gi do") ||
-                            normalizedText.includes("tao bai dang")
-                        )
-                    ) {
-                        console.log("Da tim thay nut tao bai:", text);
-
-                        await btn.click();
-
-                        foundCreatePostButton = true;
-                        break;
-                    }
-                }
-
-                if (!foundCreatePostButton) {
-                    throw new Error("Khong tim thay nut tao bai viet");
-                }
-
-                console.log("Da mo popup tao bai viet");
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, 3000)
-                );
-
-                const textboxSelector = 'div[role="dialog"] div[role="textbox"]';
-
-                await page.waitForSelector(textboxSelector, {
-                    timeout: 15000
-                });
-
-                await page.click(textboxSelector);
-
-                await page.keyboard.type(randomPost, {
-                    delay: 50
-                });
-
-                console.log("Da nhap noi dung");
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, 1500)
-                );
-
-                const imageFiles = fs.readdirSync(imageFolder);
-
-                if (imageFiles.length > 0) {
-                    const dialogButtons = await page.$$('div[role="dialog"] div[role="button"]');
-                    const addToPostResult = await clickButtonByText(
-                        dialogButtons,
-                        ["add to your post"],
-                        "Create post button"
-                    );
-
-                    if (!addToPostResult.clicked) {
-                        throw new Error("Khong tim thay nut Add to your post");
-                    }
-
-                    console.log("Da mo popup Add to your post");
-
-                    await page.waitForFunction(() => {
-                        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
-                        return dialogs.some(dialog =>
-                            (dialog.innerText || "").toLowerCase().includes("photo/video")
-                        );
-                    }, { timeout: 10000 });
-
-                    const addPostButtons = await page.$$('div[role="dialog"] div[role="button"]');
-                    let foundPhotoVideo = false;
-
-                    for (const btn of addPostButtons) {
-                        const text = await btn.evaluate(el => (el.innerText || "").trim());
-                        const normalizedText = normalizeText(text);
-
-                        console.log("Add to post button:", text);
-
-                        if (normalizedText === "photo/video") {
-                            foundPhotoVideo = true;
-                            break;
-                        }
-                    }
-
-                    if (!foundPhotoVideo) {
-                        throw new Error("Khong tim thay nut Photo/Video");
-                    }
-
-                    const randomImage =
-                        imageFiles[Math.floor(Math.random() * imageFiles.length)];
-
-                    const imagePath = path.join(imageFolder, randomImage);
-
-                    console.log("Anh duoc chon:", imagePath);
-                    const [fileChooser] = await Promise.all([
-                        page.waitForFileChooser({ timeout: 10000 }),
-                        page.evaluate(() => {
-                            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
-                            const target = dialogs
-                                .flatMap(dialog => Array.from(dialog.querySelectorAll('div[role="button"]')))
-                                .find(button => (button.innerText || "").trim().toLowerCase() === "photo/video");
-
-                            if (target) {
-                                target.click();
-                            }
-                        })
-                    ]);
-
-                    await fileChooser.accept([imagePath]);
-
-                    console.log("Da upload anh:", imagePath);
-                    console.log("Dang cho anh upload xong...");
-
-                    await page.waitForFunction(() => {
-                        const dialog = document.querySelector('div[role="dialog"]');
-                        if (!dialog) {
-                            return false;
-                        }
-
-                        const text = (dialog.innerText || "").toLowerCase();
-                        return !text.includes("add to your post");
-                    }, { timeout: 5000 }).catch(() => null);
-
-                    await new Promise(resolve =>
-                        setTimeout(resolve, 8000)
-                    );
-                } else {
-                    console.log("Khong co anh trong thu muc images");
-                }
-
-                // await page.screenshot({
-                //     path: `debug-${Date.now()}.png`,
-                //     fullPage: true
-                // });
-
-                const postButtons = await page.$$('div[role="dialog"] div[role="button"]');
-                const postResult = await clickButtonByText(
-                    postButtons,
-                    ["post", "dang"],
-                    "Post button",
-                    { exact: true }
-                );
-
-                if (!postResult.clicked) {
-                    throw new Error("Khong tim thay nut dang");
-                }
-
-                console.log("Da bam nut dang:", postResult.text);
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, 6000)
-                );
-
-                await page.reload({
-                    waitUntil: "domcontentloaded"
-                });
-
-                await page.goto("https://www.facebook.com", {
-                    waitUntil: "domcontentloaded"
-                });
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, settings.delayMin)
-                );
-
-            } catch (groupError) {
-                console.log("Loi group:", group);
-                console.log(groupError.message);
-            }
+        for (let i = 0; i < groups.length; i += chunkSize) {
+            groupChunks.push(groups.slice(i, i + chunkSize));
         }
+
+        const tasks = groupChunks.map((chunk, index) => {
+            return worker(
+                browser,
+                index + 1,
+                chunk,
+                posts,
+                cookies,
+                settings,
+                imageFolder
+            );
+        });
+
+        await Promise.all(tasks);
 
         await browser.close();
 
-        console.log("Bot chay xong");
+        console.log("Đã đăng xong tất cả group");
     } catch (error) {
-        console.log("Loi bot:", error.message);
+        console.log("Lỗi bot:", error.message);
     }
 }
 
