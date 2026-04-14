@@ -6,6 +6,7 @@ const Group = require("../models/Group");
 const Content = require("../models/Content");
 const Cookie = require("../models/Cookie");
 const Setting = require("../models/Setting");
+const Image = require("../models/Image");
 
 function normalizeText(value) {
     return (value || "")
@@ -161,7 +162,7 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
                     ]);
 
                     const randomImage =
-                        imageFiles[Math.floor(Math.random() * imageFiles.length)];
+                        imagesData[Math.floor(Math.random() * imagesData.length)];
 
                     const imagePath = path.join(imageFolder, randomImage);
 
@@ -209,7 +210,7 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
 
 async function runBot() {
     try {
-        const imageFolder = path.join(__dirname, "../data/images");
+        const imagesData = await Image.find().lean();
 
         const settings = await Setting.findOne().lean();
 
