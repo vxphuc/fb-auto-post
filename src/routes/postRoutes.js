@@ -1,9 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const runBot = require("../bot/runBot");
+
 router.post("/start", async (req, res) => {
     try {
-        runBot();
+        runBot().catch(error => {
+            console.error("Lỗi bot:", error.message);
+        });
 
         res.json({
             success: true,

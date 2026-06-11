@@ -2,11 +2,7 @@ const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
 
-const Group = require("../models/Group");
-const Content = require("../models/Content");
-const Cookie = require("../models/Cookie");
-const Setting = require("../models/Setting");
-const Image = require("../models/Image");
+const { loadBotData } = require("../utils/dataLoader");
 
 function normalizeText(value) {
     return (value || "")
@@ -48,7 +44,7 @@ async function clickButtonByText(buttons, expectedTexts, options = {}) {
     return false;
 }
 
-async function worker(browser, workerId, workerGroups, posts, cookies, settings, imageFolder) {
+async function worker(browser, workerId, workerGroups, posts, cookies, settings, imageFolder, images) {
     const page = await browser.newPage();
 
     await page.setViewport({
@@ -80,7 +76,7 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
             await new Promise(resolve => setTimeout(resolve, 5000));
 
             const randomPost =
-                posts[Math.floor(Math.random() * posts.length)];
+                posts[Math.floor(Math.random() * posts.length)] || "Đăng bài tự động";
 
             console.log(`[TAB ${workerId}] Nội dung được chọn: ${randomPost}`);
 
@@ -130,9 +126,9 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
 
             await new Promise(resolve => setTimeout(resolve, 1500));
 
-            const imageFiles = fs.readdirSync(imageFolder);
+            const canUploadImage = settings.enableImage !== false && settings.enableRandomImage !== false;
 
-            if (imageFiles.length > 0) {
+            if (canUploadImage && images.length > 0) {
                 const dialogButtons = await page.$$('div[role="dialog"] div[role="button"]');
 
                 const openedAddToPost = await clickButtonByText(
@@ -162,15 +158,15 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
                     ]);
 
                     const randomImage =
-                        imagesData[Math.floor(Math.random() * imagesData.length)];
+                        images[Math.floor(Math.random() * images.length)];
 
                     const imagePath = path.join(imageFolder, randomImage);
 
-                    await fileChooser.accept([imagePath]);
-
-                    console.log(`[TAB ${workerId}] Upload ảnh: ${randomImage}`);
-
-                    await new Promise(resolve => setTimeout(resolve, 8000));
+                    if (fs.existsSync(imagePath)) {
+                        await fileChooser.accept([imagePath]);
+                        console.log(`[TAB ${workerId}] Upload ảnh: ${randomImage}`);
+                        await new Promise(resolve => setTimeout(resolve, 8000));
+                    }
                 }
             }
 
@@ -189,8 +185,8 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
             console.log(`[TAB ${workerId}] Đăng bài thành công`);
 
             const delayTime = randomDelay(
-                settings.delayMin,
-                settings.delayMax
+                settings.delayMin || 10000,
+                settings.delayMax || 20000
             );
 
             console.log(`[TAB ${workerId}] Nghỉ ${delayTime / 1000}s`);
@@ -210,20 +206,10 @@ async function worker(browser, workerId, workerGroups, posts, cookies, settings,
 
 async function runBot() {
     try {
-        const imagesData = await Image.find().lean();
-
-        const settings = await Setting.findOne().lean();
-
-        const groupsData = await Group.find().lean();
-        const groups = groupsData.map(item => item.url);
-
-        const postsData = await Content.find().lean();
-        const posts = postsData.map(item => item.text);
-
-        const cookies = await Cookie.find().lean();
+        const { settings, groups, posts, cookies, imageFolder, images } = await loadBotData();
 
         const browser = await puppeteer.launch({
-            headless: settings.headless,
+            headless: settings.headless !== false,
             defaultViewport: null,
             args: [
                 "--disable-blink-features=AutomationControlled",
@@ -233,7 +219,7 @@ async function runBot() {
 
         const actualTabs = Math.min(
             settings.numberOfTabs || 4,
-            groups.length
+            groups.length || 1
         );
 
         const chunkSize = Math.ceil(groups.length / actualTabs);
@@ -252,7 +238,8 @@ async function runBot() {
                 posts,
                 cookies,
                 settings,
-                imageFolder
+                imageFolder,
+                images
             );
         });
 
